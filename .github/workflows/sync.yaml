@@ -2,18 +2,28 @@ name: FIFA Fantasy Score Sync
 
 on:
   schedule:
-    # Runs every 6 hours
     - cron: "0 */6 * * *"
-  workflow_dispatch: # Allows you to run it manually from GitHub if needed
+  workflow_dispatch: 
 
 jobs:
-  update-scores:
+  run-scoring-engine:
     runs-on: ubuntu-latest
     steps:
-      - name: Trigger API
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run Scoring Engine
         env:
-          API_URL: ${{ secrets.API_URL }}
-          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
-        run: |
-          curl -X GET "$API_URL" \
-          -H "x-admin-secret: $ADMIN_SECRET"
+          TURSO_DATABASE_URL: ${{ secrets.TURSO_DATABASE_URL }}
+          TURSO_AUTH_TOKEN: ${{ secrets.TURSO_AUTH_TOKEN }}
+          API_EMAIL: ${{ secrets.API_EMAIL }}
+          API_PASSWORD: ${{ secrets.API_PASSWORD }}
+        run: npx tsx scripts/sync.ts
