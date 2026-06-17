@@ -20,7 +20,6 @@ export async function GET(request: Request) {
     console.log("Authenticating with World Cup API...");
 
     // 1. FETCH THE AUTH TOKEN
-    // 1. FETCH THE AUTH TOKEN
     const authRes = await fetch("https://worldcup26.ir/auth/authenticate", {
       method: "POST",
       headers: {
