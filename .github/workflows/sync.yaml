@@ -1,0 +1,19 @@
+name: FIFA Fantasy Score Sync
+
+on:
+  schedule:
+    # Runs every 6 hours
+    - cron: "0 */6 * * *"
+  workflow_dispatch: # Allows you to run it manually from GitHub if needed
+
+jobs:
+  update-scores:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger API
+        env:
+          API_URL: ${{ secrets.API_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+        run: |
+          curl -X GET "$API_URL" \
+          -H "x-admin-secret: $ADMIN_SECRET"
