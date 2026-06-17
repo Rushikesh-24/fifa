@@ -42,7 +42,7 @@ export default function SyncStatus({
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
           <span className="relative inline-flex rounded-full h-3 w-3 bg-emerald-500"></span>
         </span>
-        <span className="text-sm font-medium text-neutral-300">
+        <span className="text-sm font-medium text-neutral-300 mr-2">
           Live API Link
         </span>
       </div>
