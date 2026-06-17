@@ -9,7 +9,7 @@ export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
   const adminSecret = request.headers.get("x-admin-secret");
 
-  const isVercelCron = process.env.NODE_ENV === "production" && authHeader === `Bearer ${process.env.VERCEL_CRON_SECRET}`;
+  const isVercelCron = process.env.NODE_ENV === "production" && authHeader === `Bearer ${process.env.CRON_SECRET}`;
   const isAdminManual = adminSecret === process.env.ADMIN_SECRET;
 
   if (!isVercelCron && !isAdminManual) {
