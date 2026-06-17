@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { db } from "../../../db/index";
 import { matchRecords, participants, selectedTeams, systemState } from "../../../db/schema";
 import { eq, inArray } from "drizzle-orm";
-
+export const maxDuration = 240;
 export async function GET(request: Request) {
   // Security: Allow Vercel Cron OR your custom Admin Secret
   const authHeader = request.headers.get("authorization");

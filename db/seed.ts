@@ -3,7 +3,7 @@ import { participants, selectedTeams } from "./schema";
 
 const fantasyData = {
   "Sanish Pagui": ["Argentina", "Germany", "Japan", "Belgium", "New Zealand"],
-  "Justin Dsouza": ["Argentina", "Spain", "Uruguay", "Belgium", "Côte d'Ivoire"],
+  "Justin Dsouza": ["Argentina", "Spain", "Uruguay", "Belgium", "Ivory Coast"],
   "Chirag Mahajan": ["France", "Spain", "Colombia", "Morocco", "Scotland"],
   "Harsh Telang": ["Spain", "France", "Croatia", "Uruguay", "Paraguay"],
   "Gladson Dias": ["France", "Portugal", "Morocco", "Japan", "Ghana"],
