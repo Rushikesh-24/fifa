@@ -3,24 +3,9 @@ import { participants, selectedTeams, systemState, matchRecords } from "../db/sc
 import { desc, eq } from "drizzle-orm";
 import PlayerAvatar from "../components/PlayerAvatar";
 import SyncStatus from "../components/SyncStatus";
+import MatchesSection from "../components/MatchesSection";
 
 export const revalidate = 60;
-
-const STAGE_LABELS: Record<string, string> = {
-  group: "Group Stage",
-};
-
-function formatStage(type: string) {
-  if (STAGE_LABELS[type]) return STAGE_LABELS[type];
-  return type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function matchResult(home: number | null | undefined, away: number | null | undefined) {
-  if (home == null || away == null) return null;
-  if (home > away) return "home";
-  if (away > home) return "away";
-  return "draw";
-}
 
 function rankStripe(index: number) {
   if (index === 0) return "border-l-[#E8B23C]"; // gold
@@ -34,26 +19,6 @@ function rankColor(index: number) {
   if (index === 1) return "text-[#C9D2D8]";
   if (index === 2) return "text-[#C0763F]";
   return "text-[#93A696]";
-}
-
-// Real tournament order, so grouping by stage actually encodes something true
-const STAGE_PRIORITY: Record<string, number> = {
-  group: 0,
-  round16: 1,
-  round_of_16: 1,
-  quarterfinal: 2,
-  quarter_final: 2,
-  semifinal: 3,
-  semi_final: 3,
-  final: 4,
-};
-
-function stagePriority(type: string) {
-  return STAGE_PRIORITY[type] ?? 99;
-}
-
-function slugify(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-");
 }
 
 export default async function LeaderboardPage() {
@@ -87,19 +52,6 @@ export default async function LeaderboardPage() {
     totalManagers > 0
       ? Math.round(players.reduce((sum, p) => sum + (p.totalPoints ?? 0), 0) / totalManagers)
       : 0;
-
-  // Group past matches by stage (group/knockout rounds), in real tournament order,
-  // so "past games" reads as a fixture list rather than one long undifferentiated feed
-  const matchesByStage = recentMatches.reduce<Record<string, typeof recentMatches>>((acc, match) => {
-    const key = match.matchType ?? "other";
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(match);
-    return acc;
-  }, {});
-
-  const stageGroups = Object.entries(matchesByStage).sort(
-    ([a], [b]) => stagePriority(a) - stagePriority(b) || a.localeCompare(b)
-  );
 
   return (
     <main className="min-h-screen bg-[#060D09] text-[#EFF5EE] font-sans selection:bg-[#2ED47E]/30">
@@ -255,103 +207,7 @@ export default async function LeaderboardPage() {
 
         {/* RESULTS */}
         {recentMatches.length > 0 && (
-          <section>
-            <div className="flex items-baseline justify-between mb-4">
-              <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-[#93A696]">
-                Full-Time Results
-              </h2>
-              <span className="text-xs font-mono text-[#93A696] tabular-nums">
-                {recentMatches.length} scored
-              </span>
-            </div>
-
-            {/* jump straight to a round instead of scrolling past everything */}
-            {stageGroups.length > 1 && (
-              <div className="flex gap-2 overflow-x-auto pb-1 mb-8 -mx-1 px-1">
-                {stageGroups.map(([stage, matches]) => (
-                  <a
-                    key={stage}
-                    href={`#stage-${slugify(stage)}`}
-                    className="shrink-0 text-[11px] font-bold uppercase tracking-[0.1em] text-[#93A696] border border-[#1B2D21] px-3 py-1.5 hover:border-[#2ED47E]/50 hover:text-[#2ED47E] transition-colors"
-                  >
-                    {formatStage(stage)} <span className="text-[#1B2D21]">·</span> {matches.length}
-                  </a>
-                ))}
-              </div>
-            )}
-
-            <div className="space-y-10">
-              {stageGroups.map(([stage, matches]) => (
-                <div key={stage} id={`stage-${slugify(stage)}`}>
-                  <div className="flex items-center gap-3 mb-3">
-                    <h3 className="text-[11px] font-bold uppercase tracking-[0.15em] text-[#2ED47E] shrink-0">
-                      {formatStage(stage)}
-                    </h3>
-                    <span className="h-px flex-1 bg-[#1B2D21]" />
-                    <span className="text-[10px] font-mono text-[#93A696] tabular-nums">{matches.length}</span>
-                  </div>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                    {matches.map((match) => {
-                      const result = matchResult(match.homeScore, match.awayScore);
-                      return (
-                        <div key={match.id} className="border border-[#1B2D21] bg-[#0D1B13] p-4 flex flex-col gap-3">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-mono text-[#93A696]">
-                              {match.matchDate
-                                ? new Date(match.matchDate as string).toLocaleDateString(undefined, {
-                                    month: "short",
-                                    day: "numeric",
-                                  })
-                                : "—"}
-                            </span>
-                            <span className="text-[10px] font-bold tracking-[0.15em] text-[#93A696] border border-[#1B2D21] px-1.5 py-0.5">
-                              {result === "draw" ? "FT · DRAW" : "FT"}
-                            </span>
-                          </div>
-
-                          <div className="space-y-1.5">
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={`text-sm font-semibold truncate ${
-                                  result === "home" ? "text-[#EFF5EE]" : "text-[#93A696]"
-                                }`}
-                              >
-                                {match.homeTeam}
-                              </span>
-                              <span
-                                className={`font-mono font-bold text-lg tabular-nums ${
-                                  result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                                }`}
-                              >
-                                {match.homeScore}
-                              </span>
-                            </div>
-                            <div className="flex items-center justify-between gap-2">
-                              <span
-                                className={`text-sm font-semibold truncate ${
-                                  result === "away" ? "text-[#EFF5EE]" : "text-[#93A696]"
-                                }`}
-                              >
-                                {match.awayTeam}
-                              </span>
-                              <span
-                                className={`font-mono font-bold text-lg tabular-nums ${
-                                  result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                                }`}
-                              >
-                                {match.awayScore}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </section>
+          <MatchesSection matches={recentMatches} />
         )}
       </div>
     </main>
