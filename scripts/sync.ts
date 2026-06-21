@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { db } from "../db/index";
-import { matchRecords, participants, selectedTeams, systemState } from "../db/schema";
+import { matchRecords, participants, selectedTeams, systemState, groupStandingsCache } from "../db/schema";
 import { eq, inArray } from "drizzle-orm";
 
 async function runEngine() {
@@ -27,9 +27,38 @@ async function runEngine() {
     const authData = await authRes.json();
     const token = authData.token;
 
-    console.log("Token secured. Fetching games...");
+    console.log("Token secured.");
 
-    // 2. FETCH GAMES
+    // 2. FETCH AND CACHE GROUP STANDINGS
+    console.log("Fetching Group Standings...");
+    const groupsRes = await fetch("https://worldcup26.ir/get/groups", {
+      headers: { 
+        "Authorization": `Bearer ${token}`, 
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" 
+      }
+    });
+    
+    if (groupsRes.ok) {
+      const groupsData = await groupsRes.json();
+      await db.insert(groupStandingsCache).values({
+        id: 1,
+        data: JSON.stringify(groupsData.groups || []),
+        updatedAt: new Date().toISOString()
+      }).onConflictDoUpdate({
+        target: groupStandingsCache.id,
+        set: {
+          data: JSON.stringify(groupsData.groups || []),
+          updatedAt: new Date().toISOString()
+        }
+      });
+      console.log("✅ Group Standings cached in Turso.");
+    } else {
+      console.error(`⚠️ Failed to fetch group standings: ${groupsRes.status}`);
+    }
+
+    // 3. FETCH GAMES
+    console.log("Fetching games...");
     const gamesRes = await fetch("https://worldcup26.ir/get/games", {
       headers: {
         "Authorization": `Bearer ${token}`, 
@@ -51,7 +80,7 @@ async function runEngine() {
 
     if (gamesToProcess.length === 0) {
       await updateSystemSyncTime();
-      console.log("✅ No new finished games. Sync time updated.");
+      console.log("✅ No new finished games to score. Sync time updated.");
       process.exit(0);
     }
 

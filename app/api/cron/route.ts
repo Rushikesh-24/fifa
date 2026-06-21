@@ -1,9 +1,11 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from "next/server";
 import { db } from "../../../db/index";
-import { matchRecords, participants, selectedTeams, systemState } from "../../../db/schema";
+import { matchRecords, participants, selectedTeams, systemState, groupStandingsCache } from "../../../db/schema";
 import { eq, inArray } from "drizzle-orm";
+
 export const maxDuration = 240;
+
 export async function GET(request: Request) {
   // Security: Allow Vercel Cron OR your custom Admin Secret
   const authHeader = request.headers.get("authorization");
@@ -46,9 +48,41 @@ export async function GET(request: Request) {
       throw new Error("Authentication succeeded but no token was returned.");
     }
 
-    console.log("Token secured. Fetching games...");
+    console.log("Token secured.");
 
-   // 2. FETCH THE GAMES USING THE TOKEN
+    // 2. FETCH AND CACHE GROUP STANDINGS
+    console.log("Fetching Group Standings...");
+    const groupsRes = await fetch("https://worldcup26.ir/get/groups", {
+      headers: { 
+        "Authorization": `Bearer ${token}`, 
+        "accept": "application/json",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Origin": "https://worldcup26.ir",
+        "Referer": "https://worldcup26.ir/"
+      }
+    });
+    
+    if (groupsRes.ok) {
+      const groupsData = await groupsRes.json();
+      await db.insert(groupStandingsCache).values({
+        id: 1,
+        data: JSON.stringify(groupsData.groups || []),
+        updatedAt: new Date().toISOString()
+      }).onConflictDoUpdate({
+        target: groupStandingsCache.id,
+        set: {
+          data: JSON.stringify(groupsData.groups || []),
+          updatedAt: new Date().toISOString()
+        }
+      });
+      console.log("✅ Group Standings cached in Turso.");
+    } else {
+      console.error(`⚠️ Failed to fetch group standings: ${groupsRes.status}`);
+    }
+
+    console.log("Fetching games...");
+
+   // 3. FETCH THE GAMES USING THE TOKEN
     const gamesRes = await fetch("https://worldcup26.ir/get/games", {
       headers: {
         "Authorization": `Bearer ${token}`, 
@@ -70,7 +104,7 @@ export async function GET(request: Request) {
       throw new Error("API did not return a valid 'games' array.");
     }
 
-    // 3. FILTER AND PROCESS GAMES
+    // 4. FILTER AND PROCESS GAMES
     // Only process games that are completely finished
     const finishedGames = games.filter((g: any) => g.finished === "TRUE");
 
@@ -84,7 +118,7 @@ export async function GET(request: Request) {
     if (gamesToProcess.length === 0) {
       // Still update the sync time even if no new games were found
       await updateSystemSyncTime();
-      return NextResponse.json({ message: "No new finished games to process. Sync time updated." });
+      return NextResponse.json({ message: "No new finished games to process. Group Standings and Sync time updated." });
     }
 
     for (const match of gamesToProcess) {

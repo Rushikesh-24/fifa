@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { db } from "../db/index";
 import { participants, selectedTeams, systemState, matchRecords } from "../db/schema";
 import { desc, eq } from "drizzle-orm";
@@ -84,12 +85,46 @@ export default async function LeaderboardPage() {
 
         {/* HERO */}
         <header>
-          <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight leading-[0.95]">
-            Standings
-          </h1>
-          <p className="mt-3 text-base md:text-lg text-[#93A696] max-w-xl">
-            Every manager, ranked by total points. Tap a name to see how each squad is scoring.
-          </p>
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <h1 className="text-5xl md:text-7xl font-black uppercase tracking-tight leading-[0.95]">
+                Standings
+              </h1>
+              <p className="mt-3 text-base md:text-lg text-[#93A696] max-w-xl">
+                Every manager, ranked by total points. Tap a name to see how each squad is scoring.
+              </p>
+            </div>
+
+            <Link
+              href="/groups"
+              className="inline-flex items-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.15em] text-[#93A696] border border-[#1B2D21] px-4 py-2.5 hover:border-[#2ED47E]/50 hover:text-[#2ED47E] transition-colors group shrink-0"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="w-3.5 h-3.5"
+                aria-hidden
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+              </svg>
+              Group Stage Standings
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
+                aria-hidden
+              >
+                <path d="M5 12h14M12 5l7 7-7 7" />
+              </svg>
+            </Link>
+          </div>
 
           {/* STAT STRIP */}
           <dl className="mt-8 grid grid-cols-2 md:grid-cols-4 gap-px bg-[#1B2D21] border border-[#1B2D21]">

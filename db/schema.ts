@@ -46,3 +46,11 @@ export const systemState = sqliteTable("system_state", {
   id: integer("id").primaryKey(), // We will hardcode this to ID 1
   lastSyncAt: text("last_sync_at").notNull(),
 });
+
+// 5. Group Standings Cache
+// Stores the latest group standings JSON directly from the API.
+export const groupStandingsCache = sqliteTable("group_standings_cache", {
+  id: integer("id").primaryKey(), // Hardcoded to 1
+  data: text("data").notNull(), // The stringified JSON array
+  updatedAt: text("updated_at").default(new Date().toISOString()),
+});
