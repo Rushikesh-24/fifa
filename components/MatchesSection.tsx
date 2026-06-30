@@ -9,6 +9,8 @@ export type MatchRecord = {
   awayTeam: string;
   homeScore: number | null | undefined;
   awayScore: number | null | undefined;
+  homePenaltyScore?: number | null | undefined;
+  awayPenaltyScore?: number | null | undefined;
   matchType: string | null | undefined;
   matchDate: string | Date | null | undefined;
   processedForPoints: boolean;
@@ -46,13 +48,22 @@ function stagePriority(type: string) {
   return STAGE_PRIORITY[type] ?? 99;
 }
 
+// Updated to calculate winner based on penalties if regular time is a draw
 function matchResult(
   home: number | null | undefined,
-  away: number | null | undefined
+  away: number | null | undefined,
+  homePen?: number | null | undefined,
+  awayPen?: number | null | undefined
 ): "home" | "away" | "draw" | null {
   if (home == null || away == null) return null;
   if (home > away) return "home";
   if (away > home) return "away";
+  
+  if (homePen != null && awayPen != null) {
+    if (homePen > awayPen) return "home";
+    if (awayPen > homePen) return "away";
+  }
+  
   return "draw";
 }
 
@@ -312,7 +323,9 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
       {filtered.length > 0 && view === "grid" && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {filtered.map((match) => {
-            const result = matchResult(match.homeScore, match.awayScore);
+            const result = matchResult(match.homeScore, match.awayScore, match.homePenaltyScore, match.awayPenaltyScore);
+            const hasPenalties = match.homePenaltyScore != null && match.awayPenaltyScore != null;
+
             return (
               <div
                 key={match.id}
@@ -338,15 +351,22 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                     >
                       {match.homeTeam}
                     </span>
-                    <span
-                      className={`font-mono font-black text-xl tabular-nums ${
-                        result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                      }`}
-                    >
-                      {match.homeScore ?? "—"}
-                    </span>
+                    <div className="flex items-baseline gap-1.5">
+                      {match.homePenaltyScore != null && (
+                        <span className="text-[11px] text-[#93A696] font-bold">({match.homePenaltyScore})</span>
+                      )}
+                      <span
+                        className={`font-mono font-black text-xl tabular-nums ${
+                          result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
+                        }`}
+                      >
+                        {match.homeScore ?? "—"}
+                      </span>
+                    </div>
                   </div>
+                  
                   <div className="h-px bg-[#1B2D21]" />
+                  
                   <div className="flex items-center justify-between gap-2">
                     <span
                       className={`text-sm font-semibold truncate ${
@@ -355,20 +375,25 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                     >
                       {match.awayTeam}
                     </span>
-                    <span
-                      className={`font-mono font-black text-xl tabular-nums ${
-                        result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                      }`}
-                    >
-                      {match.awayScore ?? "—"}
-                    </span>
+                    <div className="flex items-baseline gap-1.5">
+                      {match.awayPenaltyScore != null && (
+                        <span className="text-[11px] text-[#93A696] font-bold">({match.awayPenaltyScore})</span>
+                      )}
+                      <span
+                        className={`font-mono font-black text-xl tabular-nums ${
+                          result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
+                        }`}
+                      >
+                        {match.awayScore ?? "—"}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 {/* FT badge */}
                 <div className="flex justify-end pt-1">
                   <span className="text-[10px] font-bold tracking-[0.15em] text-[#93A696] border border-[#1B2D21] px-1.5 py-0.5">
-                    {result === "draw" ? "FT · DRAW" : "FT"}
+                    {hasPenalties ? "FT · PENS" : result === "draw" ? "FT · DRAW" : "FT"}
                   </span>
                 </div>
               </div>
@@ -391,7 +416,9 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
 
           <div className="divide-y divide-[#1B2D21]">
             {filtered.map((match) => {
-              const result = matchResult(match.homeScore, match.awayScore);
+              const result = matchResult(match.homeScore, match.awayScore, match.homePenaltyScore, match.awayPenaltyScore);
+              const hasPenalties = match.homePenaltyScore != null && match.awayPenaltyScore != null;
+
               return (
                 <div
                   key={match.id}
@@ -412,9 +439,13 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                     </span>
 
                     {/* Score box */}
-                    <div className="flex items-center justify-center gap-2">
+                    <div className="flex items-center justify-center gap-1.5">
+                      {match.homePenaltyScore != null && (
+                        <span className="text-[10px] font-bold text-[#93A696]">({match.homePenaltyScore})</span>
+                      )}
+                      
                       <span
-                        className={`font-mono font-black text-base tabular-nums w-6 text-right ${
+                        className={`font-mono font-black text-base tabular-nums w-4 text-right ${
                           result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
                         }`}
                       >
@@ -422,12 +453,16 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                       </span>
                       <span className="text-[#2D3F33] font-bold select-none">–</span>
                       <span
-                        className={`font-mono font-black text-base tabular-nums w-6 text-left ${
+                        className={`font-mono font-black text-base tabular-nums w-4 text-left ${
                           result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
                         }`}
                       >
                         {match.awayScore ?? "—"}
                       </span>
+                      
+                      {match.awayPenaltyScore != null && (
+                        <span className="text-[10px] font-bold text-[#93A696]">({match.awayPenaltyScore})</span>
+                      )}
                     </div>
 
                     <span
@@ -463,14 +498,20 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                           >
                             {match.homeTeam}
                           </span>
-                          <span
-                            className={`font-mono font-black text-sm tabular-nums ${
-                              result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                            }`}
-                          >
-                            {match.homeScore ?? "—"}
-                          </span>
+                          <div className="flex items-baseline gap-1.5">
+                            {match.homePenaltyScore != null && (
+                              <span className="text-[10px] text-[#93A696] font-bold">({match.homePenaltyScore})</span>
+                            )}
+                            <span
+                              className={`font-mono font-black text-sm tabular-nums ${
+                                result === "home" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
+                              }`}
+                            >
+                              {match.homeScore ?? "—"}
+                            </span>
+                          </div>
                         </div>
+                        
                         <div className="flex items-center justify-between gap-2">
                           <span
                             className={`text-xs font-semibold truncate ${
@@ -479,13 +520,18 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                           >
                             {match.awayTeam}
                           </span>
-                          <span
-                            className={`font-mono font-black text-sm tabular-nums ${
-                              result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
-                            }`}
-                          >
-                            {match.awayScore ?? "—"}
-                          </span>
+                          <div className="flex items-baseline gap-1.5">
+                            {match.awayPenaltyScore != null && (
+                              <span className="text-[10px] text-[#93A696] font-bold">({match.awayPenaltyScore})</span>
+                            )}
+                            <span
+                              className={`font-mono font-black text-sm tabular-nums ${
+                                result === "away" ? "text-[#2ED47E]" : "text-[#EFF5EE]"
+                              }`}
+                            >
+                              {match.awayScore ?? "—"}
+                            </span>
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -495,7 +541,7 @@ export default function MatchesSection({ matches }: { matches: MatchRecord[] }) 
                         {formatStage(match.matchType ?? "other")}
                       </span>
                       <span className="text-[10px] font-bold tracking-[0.12em] text-[#93A696] border border-[#1B2D21] px-1.5 py-0.5">
-                        {result === "draw" ? "FT · DRAW" : "FT"}
+                        {hasPenalties ? "FT · PENS" : result === "draw" ? "FT · DRAW" : "FT"}
                       </span>
                     </div>
                   </div>

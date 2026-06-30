@@ -90,8 +90,25 @@ async function runEngine() {
       const homeScore = parseInt(match.home_score) || 0;
       const awayScore = parseInt(match.away_score) || 0;
 
-      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type);
-      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type);
+      // Determine regular match outcomes
+      let homeWon = homeScore > awayScore;
+      let awayWon = awayScore > homeScore;
+
+      // If regular time is a draw, break the tie using penalty scores
+      if (homeScore === awayScore) {
+        const homePenaltyScore = parseInt(match.home_penalty_score) || 0;
+        const awayPenaltyScore = parseInt(match.away_penalty_score) || 0;
+        
+        if (homePenaltyScore > awayPenaltyScore) {
+          homeWon = true;
+        } else if (awayPenaltyScore > homePenaltyScore) {
+          awayWon = true;
+        }
+      }
+
+      // Calculate points by explicitly verifying progression winners independently of goal math
+      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type || "group", homeWon);
+      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type || "group", awayWon);
 
       await distributePointsToUsers(homeTeam, homePoints);
       await distributePointsToUsers(awayTeam, awayPoints);
@@ -102,6 +119,8 @@ async function runEngine() {
         awayTeam,
         homeScore,
         awayScore,
+        homePenaltyScore: match.home_penalty_score ? parseInt(match.home_penalty_score) : null,
+        awayPenaltyScore: match.away_penalty_score ? parseInt(match.away_penalty_score) : null,
         homeScorers: match.home_scorers || "",
         awayScorers: match.away_scorers || "",
         matchType: match.type || "group",
@@ -127,27 +146,32 @@ async function updateSystemSyncTime() {
     .onConflictDoUpdate({ target: systemState.id, set: { lastSyncAt: new Date().toISOString() } });
 }
 
-function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string) {
+function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string, isWinner: boolean) {
+  // Goal points and volume bonuses are calculated purely on active play-time scores
   let points = teamScore * 10;
   if (teamScore >= 5) points += 25;
   else if (teamScore === 3 || teamScore === 4) points += 10;
+  
+  // Margins and clean sheets also track play-time goals exclusively
   if (teamScore > opponentScore && opponentScore === 0) points += 25;
   if (teamScore > opponentScore && (teamScore - opponentScore) >= 3) points += 25;
   if (hasHatTrick(scorersString)) points += 50;
   
-  const isWinner = teamScore > opponentScore;
+  // Award knockout progression bonuses securely using penalty outcomes if verified
   if (isWinner) {
-    if (matchType.includes("16")) points += 25; 
-    if (matchType.includes("qf") || matchType.includes("quarter")) points += 50; 
-    if (matchType.includes("sf") || matchType.includes("semi")) points += 75; 
-    if (matchType.includes("final") && !matchType.includes("semi")) points += 200; 
+    const typeLower = matchType.toLowerCase();
+    if (typeLower.includes("32") || typeLower.includes("r32")) points += 25; 
+    if (typeLower.includes("16")) points += 25; 
+    if (typeLower.includes("qf") || typeLower.includes("quarter")) points += 50; 
+    if (typeLower.includes("sf") || typeLower.includes("semi")) points += 75; 
+    if (typeLower.includes("final") && !typeLower.includes("semi")) points += 200; 
   }
   return points;
 }
 
 function hasHatTrick(scorersString: string): boolean {
   if (!scorersString || scorersString === "null" || scorersString.length < 5) return false;
-  const rawArray = scorersString.replace(/^[{"“]+|[}"”]+$/g, '').split(/","|"”,”“"/);
+  const rawArray = scorersString.replace(/^[{"“]+|[}"”]+$/g, '').split(/","|"”,”.../);
   const playerGoalCounts: Record<string, number> = {};
   for (const event of rawArray) {
     if (event.includes("(OG)")) continue;

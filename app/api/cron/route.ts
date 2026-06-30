@@ -6,8 +6,26 @@ import { eq, inArray } from "drizzle-orm";
 
 export const maxDuration = 240;
 
+// --- ROBUST FETCH WRAPPER WITH RETRY LOGIC ---
+async function fetchWithRetry(url: string, options: any, maxRetries = 4) {
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const res = await fetch(url, options);
+      if (res.ok) return res;
+      console.warn(`Attempt ${i + 1} failed for ${url} with status: ${res.status}`);
+    } catch (error: any) {
+      console.warn(`Attempt ${i + 1} network error for ${url}:`, error.message);
+      if (i === maxRetries - 1) throw error; // Rethrow if it's our last attempt
+    }
+    // Exponential backoff: Wait 1s, 2s, then 4s before trying again
+    const delay = Math.pow(2, i) * 1000;
+    console.log(`Waiting ${delay}ms before retrying...`);
+    await new Promise(resolve => setTimeout(resolve, delay));
+  }
+  throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
+}
+
 export async function GET(request: Request) {
-  // Security: Allow Vercel Cron OR your custom Admin Secret
   const authHeader = request.headers.get("authorization");
   const adminSecret = request.headers.get("x-admin-secret");
 
@@ -21,8 +39,8 @@ export async function GET(request: Request) {
   try {
     console.log("Authenticating with World Cup API...");
 
-    // 1. FETCH THE AUTH TOKEN
-    const authRes = await fetch("https://worldcup26.ir/auth/authenticate", {
+    // 1. FETCH THE AUTH TOKEN (WITH RETRIES)
+    const authRes = await fetchWithRetry("https://worldcup26.ir/auth/authenticate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -37,32 +55,25 @@ export async function GET(request: Request) {
       }),
     });
 
-    if (!authRes.ok) {
-      throw new Error(`Auth failed with status: ${authRes.status}`);
-    }
-
     const authData = await authRes.json();
     const token = authData.token;
 
-    if (!token) {
-      throw new Error("Authentication succeeded but no token was returned.");
-    }
-
+    if (!token) throw new Error("Authentication succeeded but no token was returned.");
     console.log("Token secured.");
 
-    // 2. FETCH AND CACHE GROUP STANDINGS
+    // 2. FETCH AND CACHE GROUP STANDINGS (WITH RETRIES)
     console.log("Fetching Group Standings...");
-    const groupsRes = await fetch("https://worldcup26.ir/get/groups", {
-      headers: { 
-        "Authorization": `Bearer ${token}`, 
-        "accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Origin": "https://worldcup26.ir",
-        "Referer": "https://worldcup26.ir/"
-      }
-    });
-    
-    if (groupsRes.ok) {
+    try {
+      const groupsRes = await fetchWithRetry("https://worldcup26.ir/get/groups", {
+        headers: { 
+          "Authorization": `Bearer ${token}`, 
+          "accept": "application/json",
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Origin": "https://worldcup26.ir",
+          "Referer": "https://worldcup26.ir/"
+        }
+      });
+      
       const groupsData = await groupsRes.json();
       await db.insert(groupStandingsCache).values({
         id: 1,
@@ -76,14 +87,13 @@ export async function GET(request: Request) {
         }
       });
       console.log("✅ Group Standings cached in Turso.");
-    } else {
-      console.error(`⚠️ Failed to fetch group standings: ${groupsRes.status}`);
+    } catch (e) {
+      console.error("⚠️ Non-fatal error: Failed to fetch group standings, skipping...");
     }
 
+    // 3. FETCH THE GAMES USING THE TOKEN (WITH RETRIES)
     console.log("Fetching games...");
-
-   // 3. FETCH THE GAMES USING THE TOKEN
-    const gamesRes = await fetch("https://worldcup26.ir/get/games", {
+    const gamesRes = await fetchWithRetry("https://worldcup26.ir/get/games", {
       headers: {
         "Authorization": `Bearer ${token}`, 
         "accept": "application/json",
@@ -93,56 +103,57 @@ export async function GET(request: Request) {
       }
     });
 
-    if (!gamesRes.ok) {
-      throw new Error(`Games fetch failed with status: ${gamesRes.status}`);
-    }
-
     const data = await gamesRes.json();
-    const games = data.games; // Extract the array from inside the "games" object
+    const games = data.games;
 
     if (!games || !Array.isArray(games)) {
       throw new Error("API did not return a valid 'games' array.");
     }
 
     // 4. FILTER AND PROCESS GAMES
-    // Only process games that are completely finished
     const finishedGames = games.filter((g: any) => g.finished === "TRUE");
-
-    // Fetch matches we've already scored from Turso to prevent double counting
     const alreadyProcessed = await db.select({ id: matchRecords.id }).from(matchRecords);
     const processedIds = alreadyProcessed.map((m) => m.id);
-
-    // Filter out games we've already processed
     const gamesToProcess = finishedGames.filter((g: any) => !processedIds.includes(g.id));
 
     if (gamesToProcess.length === 0) {
-      // Still update the sync time even if no new games were found
       await updateSystemSyncTime();
       return NextResponse.json({ message: "No new finished games to process. Group Standings and Sync time updated." });
     }
 
     for (const match of gamesToProcess) {
-      // Safely fallback to the label if the official English name is missing (Knockout stages)
       const homeTeam = match.home_team_name_en || match.home_team_label || "Unknown Team";
       const awayTeam = match.away_team_name_en || match.away_team_label || "Unknown Team";
       const homeScore = parseInt(match.home_score) || 0;
       const awayScore = parseInt(match.away_score) || 0;
 
-      // --- CALCULATE POINTS ---
-      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type);
-      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type);
+      // Extract penalty scores if they exist
+      const homePenalty = match.home_penalty_score ? parseInt(match.home_penalty_score) : null;
+      const awayPenalty = match.away_penalty_score ? parseInt(match.away_penalty_score) : null;
 
-      // --- DISTRIBUTE POINTS TO PARTICIPANTS ---
+      // Determine the true winner (accounting for penalty shootouts)
+      let homeWon = homeScore > awayScore;
+      let awayWon = awayScore > homeScore;
+
+      if (homeScore === awayScore && homePenalty !== null && awayPenalty !== null) {
+        homeWon = homePenalty > awayPenalty;
+        awayWon = awayPenalty > homePenalty;
+      }
+
+      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type, homeWon);
+      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type, awayWon);
+
       await distributePointsToUsers(homeTeam, homePoints);
       await distributePointsToUsers(awayTeam, awayPoints);
 
-      // --- RECORD THE MATCH AS PROCESSED ---
-     await db.insert(matchRecords).values({
+      await db.insert(matchRecords).values({
         id: match.id,
         homeTeam: homeTeam,
         awayTeam: awayTeam,
         homeScore: homeScore,
         awayScore: awayScore,
+        homePenaltyScore: match.home_penalty_score ? parseInt(match.home_penalty_score) : null,
+        awayPenaltyScore: match.away_penalty_score ? parseInt(match.away_penalty_score) : null,
         homeScorers: match.home_scorers || "",
         awayScorers: match.away_scorers || "",
         matchType: match.type || "group",
@@ -152,10 +163,9 @@ export async function GET(request: Request) {
       });
     }
 
-    // --- UPDATE SYSTEM STATE FOR UI SYNC TIMER ---
     await updateSystemSyncTime();
-
     return NextResponse.json({ message: `Successfully processed ${gamesToProcess.length} games!` });
+
   } catch (error: any) {
     console.error("Cron Job Error:", error);
     return NextResponse.json({ error: error.message || "Internal Server Error" }, { status: 500 });
@@ -175,49 +185,36 @@ async function updateSystemSyncTime() {
     });
 }
 
-function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string) {
+function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string, isWinner: boolean) {
   let points = 0;
-
-  // 1. Goals (+10 per goal)
   points += teamScore * 10;
-
-  // 2. Goal Bonuses (does not stack, takes highest)
   if (teamScore >= 5) points += 25;
   else if (teamScore === 3 || teamScore === 4) points += 10;
-
-  // 3. Defensive Bonus (+25 for win with clean sheet)
-  if (teamScore > opponentScore && opponentScore === 0) points += 25;
-
-  // 4. Winning Margin (+25 for winning by 3+ goals)
-  if (teamScore > opponentScore && (teamScore - opponentScore) >= 3) points += 25;
-
-  // 5. Hat-Trick Bonus (+50)
+  
+  // Defensive bonus applies if they win and conceded 0 regular goals (even if won on penalties after 0-0)
+  if (isWinner && opponentScore === 0) points += 25;
+  
+  // Winning margin only applies to regular time score differences
+  if (isWinner && (teamScore - opponentScore) >= 3) points += 25;
+  
   if (hasHatTrick(scorersString)) points += 50;
-
-  // 6. Tournament Progression (Awarded if they win the match)
-  const isWinner = teamScore > opponentScore;
+  
   if (isWinner) {
-    if (matchType.includes("16")) points += 25; 
+    // Added "32" to catch the Round of 32 match types (e.g., "type": "r32")
+    if (matchType.includes("32") || matchType.includes("16")) points += 25; 
     if (matchType.includes("qf") || matchType.includes("quarter")) points += 50; 
     if (matchType.includes("sf") || matchType.includes("semi")) points += 75; 
     if (matchType.includes("final") && !matchType.includes("semi")) points += 200; 
   }
-
   return points;
 }
 
 function hasHatTrick(scorersString: string): boolean {
   if (!scorersString || scorersString === "null" || scorersString.length < 5) return false;
-  
-  // Clean string and split into an array of goal events
   const rawArray = scorersString.replace(/^[{"“]+|[}"”]+$/g, '').split(/","|"”,”“"/);
-  
   const playerGoalCounts: Record<string, number> = {};
-  
   for (const event of rawArray) {
-    if (event.includes("(OG)")) continue; // Ignore own goals
-    
-    // Extract the player name (Everything before the minute number)
+    if (event.includes("(OG)")) continue; 
     const match = event.match(/^(.*?)\s\d/);
     if (match && match[1]) {
       const playerName = match[1].trim();
@@ -230,34 +227,15 @@ function hasHatTrick(scorersString: string): boolean {
 
 async function distributePointsToUsers(teamName: string, pointsEarned: number) {
   if (pointsEarned === 0) return;
-
-  // 1. Find all instances of this team being selected
-  const teamsToUpdate = await db
-    .select()
-    .from(selectedTeams)
-    .where(eq(selectedTeams.teamName, teamName));
-
-  // 2. Update the points specific to that team pick
+  const teamsToUpdate = await db.select().from(selectedTeams).where(eq(selectedTeams.teamName, teamName));
   for (const team of teamsToUpdate) {
-    await db
-      .update(selectedTeams)
-      .set({ pointsEarned: team.pointsEarned + pointsEarned })
-      .where(eq(selectedTeams.id, team.id));
+    await db.update(selectedTeams).set({ pointsEarned: team.pointsEarned + pointsEarned }).where(eq(selectedTeams.id, team.id));
   }
-
-  // 3. Update the total score for the participants who own those teams
   const participantIds = teamsToUpdate.map((t) => t.participantId);
   if (participantIds.length > 0) {
-    const users = await db
-      .select({ id: participants.id, totalPoints: participants.totalPoints })
-      .from(participants)
-      .where(inArray(participants.id, participantIds));
-
+    const users = await db.select({ id: participants.id, totalPoints: participants.totalPoints }).from(participants).where(inArray(participants.id, participantIds));
     for (const user of users) {
-      await db
-        .update(participants)
-        .set({ totalPoints: user.totalPoints + pointsEarned })
-        .where(eq(participants.id, user.id));
+      await db.update(participants).set({ totalPoints: user.totalPoints + pointsEarned }).where(eq(participants.id, user.id));
     }
   }
 }
