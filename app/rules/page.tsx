@@ -66,7 +66,7 @@ export default function RulesPage() {
         className="pointer-events-none fixed inset-0 z-0 bg-[radial-gradient(ellipse_80%_45%_at_50%_-10%,rgba(46,212,126,0.14),transparent)]"
       />
 
-      <div className="relative z-10 max-w-4xl mx-auto px-4 md:px-8 py-10 md:py-16 pb-24 space-y-12">
+      <div className="relative z-10 max-w-7xl mx-auto px-4 md:px-8 py-10 md:py-16 pb-24 space-y-12">
         {/* HERO */}
         <header>
           <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">

@@ -3,7 +3,7 @@ import Link from "next/link";
 import { db } from "../../db/index";
 import { groupStandingsCache } from "../../db/schema";
 import { eq } from "drizzle-orm";
-import Image from "next/image";
+import { Flag } from "@/components/Flag";
 
 // Revalidate the Vercel cache every hour (60 seconds)
 export const revalidate = 60;
@@ -61,29 +61,6 @@ const TEAM_INFO: Record<string, { name: string; code: string }> = {
   "48": { name: "Panama", code: "pa" },
 };
 
-function Flag({ code, name }: { code?: string; name: string }) {
-  if (!code) {
-    return (
-      <div className="w-6 h-4.5 sm:w-7 sm:h-5 shrink-0 rounded-xs border border-[#1B2D21] bg-[#0A1610] flex items-center justify-center">
-        <span className="text-[8px] font-bold text-[#2D3F33]">{name.slice(0, 2).toUpperCase()}</span>
-      </div>
-    );
-  }
-  return (
-    <div className="w-6 h-4.5 sm:w-7 sm:h-5 shrink-0 rounded-xs overflow-hidden border border-[#1B2D21] bg-[#0A1610]">
-      {/* plain <img>, not next/image, so this works without remotePatterns config */}
-      <Image
-        src={`https://flagcdn.com/w40/${code}.png`}
-        alt={`${name} flag`}
-        width={28}
-        height={20}
-        loading="lazy"
-        decoding="async"
-        className="w-full h-full object-cover"
-      />
-    </div>
-  );
-}
 
 export default async function GroupsPage() {
   let groups: any[] = [];
@@ -140,7 +117,7 @@ export default async function GroupsPage() {
             >
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
-            Fantasy Leaderboard
+            Manager Leaderboard
           </Link>
         </div>
 
@@ -241,7 +218,7 @@ export default async function GroupsPage() {
                               </td>
                               <td className="px-2 py-2.5">
                                 <div className="flex items-center gap-2.5 min-w-0">
-                                  <Flag code={info?.code} name={teamName} />
+                                  <Flag name={teamName} />
                                   <span className="font-semibold whitespace-nowrap truncate">{teamName}</span>
                                 </div>
                               </td>

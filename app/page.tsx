@@ -198,7 +198,7 @@ export default async function LeaderboardPage() {
         }
       `}</style>
 
-      <div className="relative z-10 max-w-5xl mx-auto px-4 md:px-8 py-10 md:py-16 pb-24 space-y-14">
+      <div className="relative z-10 max-w-7xl mx-auto px-4 md:px-8 py-10 md:py-16 pb-24 space-y-14">
         {/* TICKER BAR */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#1B2D21] pb-6">
           <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.2em] text-[#2ED47E]">
