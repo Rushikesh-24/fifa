@@ -3,11 +3,17 @@ import { db } from "../db/index";
 import { matchRecords, participants, selectedTeams, systemState, groupStandingsCache } from "../db/schema";
 import { eq, inArray } from "drizzle-orm";
 
+// Safely parse penalty scores (Catches literal "null" strings from the API)
+const parsePenalty = (val: any) => {
+  if (val === undefined || val === null || val === "null" || val === "") return null;
+  const parsed = parseInt(val);
+  return isNaN(parsed) ? null : parsed;
+};
+
 async function runRecalculation() {
   try {
     console.log("⚠️ WARNING: Starting full league point recalculation...");
     
-    // 1. RESET ALL POINTS TO ZERO TO PREVENT DOUBLE-STACKING MULTIPLIERS
     console.log("Resetting all manager total points to 0...");
     await db.update(participants).set({ totalPoints: 0 });
 
@@ -75,20 +81,21 @@ async function runRecalculation() {
 
     console.log(`Found ${finishedGames.length} finished games to rebuild.`);
 
-    // 5. RE-PROCESS EVERY COMPLETED MATCH WITH NEW KNOCKOUT SCORING RULES
+    // 5. RE-PROCESS EVERY COMPLETED MATCH
     for (const match of finishedGames) {
       const homeTeam = match.home_team_name_en || match.home_team_label || "Unknown Team";
       const awayTeam = match.away_team_name_en || match.away_team_label || "Unknown Team";
       const homeScore = parseInt(match.home_score) || 0;
       const awayScore = parseInt(match.away_score) || 0;
 
+      const homePenaltyScore = parsePenalty(match.home_penalty_score);
+      const awayPenaltyScore = parsePenalty(match.away_penalty_score);
+
       let homeWon = homeScore > awayScore;
       let awayWon = awayScore > homeScore;
 
       // Handle penalty shootouts for draws
-      if (homeScore === awayScore) {
-        const homePenaltyScore = parseInt(match.home_penalty_score) || 0;
-        const awayPenaltyScore = parseInt(match.away_penalty_score) || 0;
+      if (homeScore === awayScore && homePenaltyScore !== null && awayPenaltyScore !== null) {
         if (homePenaltyScore > awayPenaltyScore) homeWon = true;
         else if (awayPenaltyScore > homePenaltyScore) awayWon = true;
       }
@@ -99,14 +106,14 @@ async function runRecalculation() {
       await distributePointsToUsers(homeTeam, homePoints);
       await distributePointsToUsers(awayTeam, awayPoints);
 
-     await db.insert(matchRecords).values({
+      await db.insert(matchRecords).values({
         id: match.id,
         homeTeam,
         awayTeam,
         homeScore,
         awayScore,
-        homePenaltyScore: match.home_penalty_score ? parseInt(match.home_penalty_score) : null,
-        awayPenaltyScore: match.away_penalty_score ? parseInt(match.away_penalty_score) : null,
+        homePenaltyScore,
+        awayPenaltyScore,
         homeScorers: match.home_scorers || "",
         awayScorers: match.away_scorers || "",
         matchType: match.type || "group",

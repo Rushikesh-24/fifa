@@ -15,15 +15,21 @@ async function fetchWithRetry(url: string, options: any, maxRetries = 4) {
       console.warn(`Attempt ${i + 1} failed for ${url} with status: ${res.status}`);
     } catch (error: any) {
       console.warn(`Attempt ${i + 1} network error for ${url}:`, error.message);
-      if (i === maxRetries - 1) throw error; // Rethrow if it's our last attempt
+      if (i === maxRetries - 1) throw error; 
     }
-    // Exponential backoff: Wait 1s, 2s, then 4s before trying again
     const delay = Math.pow(2, i) * 1000;
     console.log(`Waiting ${delay}ms before retrying...`);
     await new Promise(resolve => setTimeout(resolve, delay));
   }
   throw new Error(`Failed to fetch ${url} after ${maxRetries} attempts`);
 }
+
+// Safely parse penalty scores (Catches literal "null" strings from the API)
+const parsePenalty = (val: any) => {
+  if (val === undefined || val === null || val === "null" || val === "") return null;
+  const parsed = parseInt(val);
+  return isNaN(parsed) ? null : parsed;
+};
 
 export async function GET(request: Request) {
   const authHeader = request.headers.get("authorization");
@@ -39,13 +45,13 @@ export async function GET(request: Request) {
   try {
     console.log("Authenticating with World Cup API...");
 
-    // 1. FETCH THE AUTH TOKEN (WITH RETRIES)
+    // 1. FETCH THE AUTH TOKEN
     const authRes = await fetchWithRetry("https://worldcup26.ir/auth/authenticate", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
         "Origin": "https://worldcup26.ir",
         "Referer": "https://worldcup26.ir/"
       },
@@ -61,16 +67,14 @@ export async function GET(request: Request) {
     if (!token) throw new Error("Authentication succeeded but no token was returned.");
     console.log("Token secured.");
 
-    // 2. FETCH AND CACHE GROUP STANDINGS (WITH RETRIES)
+    // 2. FETCH AND CACHE GROUP STANDINGS
     console.log("Fetching Group Standings...");
     try {
       const groupsRes = await fetchWithRetry("https://worldcup26.ir/get/groups", {
         headers: { 
           "Authorization": `Bearer ${token}`, 
           "accept": "application/json",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          "Origin": "https://worldcup26.ir",
-          "Referer": "https://worldcup26.ir/"
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
         }
       });
       
@@ -86,20 +90,18 @@ export async function GET(request: Request) {
           updatedAt: new Date().toISOString()
         }
       });
-      console.log("✅ Group Standings cached in Turso.");
+      console.log("✅ Group Standings cached.");
     } catch (e) {
-      console.error("⚠️ Non-fatal error: Failed to fetch group standings, skipping...");
+      console.error("⚠️ Failed to fetch group standings, skipping...");
     }
 
-    // 3. FETCH THE GAMES USING THE TOKEN (WITH RETRIES)
+    // 3. FETCH THE GAMES
     console.log("Fetching games...");
     const gamesRes = await fetchWithRetry("https://worldcup26.ir/get/games", {
       headers: {
         "Authorization": `Bearer ${token}`, 
         "accept": "application/json",
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Origin": "https://worldcup26.ir",
-        "Referer": "https://worldcup26.ir/"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
       }
     });
 
@@ -118,7 +120,7 @@ export async function GET(request: Request) {
 
     if (gamesToProcess.length === 0) {
       await updateSystemSyncTime();
-      return NextResponse.json({ message: "No new finished games to process. Group Standings and Sync time updated." });
+      return NextResponse.json({ message: "No new finished games to process. Sync time updated." });
     }
 
     for (const match of gamesToProcess) {
@@ -127,33 +129,34 @@ export async function GET(request: Request) {
       const homeScore = parseInt(match.home_score) || 0;
       const awayScore = parseInt(match.away_score) || 0;
 
-      // Extract penalty scores if they exist
-      const homePenalty = match.home_penalty_score ? parseInt(match.home_penalty_score) : null;
-      const awayPenalty = match.away_penalty_score ? parseInt(match.away_penalty_score) : null;
+      // Safely extract penalty scores
+      const homePenaltyScore = parsePenalty(match.home_penalty_score);
+      const awayPenaltyScore = parsePenalty(match.away_penalty_score);
 
-      // Determine the true winner (accounting for penalty shootouts)
+      // Determine regular match outcomes
       let homeWon = homeScore > awayScore;
       let awayWon = awayScore > homeScore;
 
-      if (homeScore === awayScore && homePenalty !== null && awayPenalty !== null) {
-        homeWon = homePenalty > awayPenalty;
-        awayWon = awayPenalty > homePenalty;
+      // Tiebreaker check
+      if (homeScore === awayScore && homePenaltyScore !== null && awayPenaltyScore !== null) {
+        if (homePenaltyScore > awayPenaltyScore) homeWon = true;
+        else if (awayPenaltyScore > homePenaltyScore) awayWon = true;
       }
 
-      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type, homeWon);
-      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type, awayWon);
+      const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type || "group", homeWon);
+      const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type || "group", awayWon);
 
       await distributePointsToUsers(homeTeam, homePoints);
       await distributePointsToUsers(awayTeam, awayPoints);
 
       await db.insert(matchRecords).values({
         id: match.id,
-        homeTeam: homeTeam,
-        awayTeam: awayTeam,
-        homeScore: homeScore,
-        awayScore: awayScore,
-        homePenaltyScore: match.home_penalty_score ? parseInt(match.home_penalty_score) : null,
-        awayPenaltyScore: match.away_penalty_score ? parseInt(match.away_penalty_score) : null,
+        homeTeam,
+        awayTeam,
+        homeScore,
+        awayScore,
+        homePenaltyScore,
+        awayPenaltyScore,
         homeScorers: match.home_scorers || "",
         awayScorers: match.away_scorers || "",
         matchType: match.type || "group",
@@ -179,32 +182,25 @@ export async function GET(request: Request) {
 async function updateSystemSyncTime() {
   await db.insert(systemState)
     .values({ id: 1, lastSyncAt: new Date().toISOString() })
-    .onConflictDoUpdate({
-      target: systemState.id,
-      set: { lastSyncAt: new Date().toISOString() }
-    });
+    .onConflictDoUpdate({ target: systemState.id, set: { lastSyncAt: new Date().toISOString() } });
 }
 
 function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string, isWinner: boolean) {
-  let points = 0;
-  points += teamScore * 10;
+  let points = teamScore * 10;
   if (teamScore >= 5) points += 25;
   else if (teamScore === 3 || teamScore === 4) points += 10;
   
-  // Defensive bonus applies if they win and conceded 0 regular goals (even if won on penalties after 0-0)
-  if (isWinner && opponentScore === 0) points += 25;
-  
-  // Winning margin only applies to regular time score differences
-  if (isWinner && (teamScore - opponentScore) >= 3) points += 25;
-  
+  if (teamScore > opponentScore && opponentScore === 0) points += 25;
+  if (teamScore > opponentScore && (teamScore - opponentScore) >= 3) points += 25;
   if (hasHatTrick(scorersString)) points += 50;
   
   if (isWinner) {
-    // Added "32" to catch the Round of 32 match types (e.g., "type": "r32")
-    if (matchType.includes("32") || matchType.includes("16")) points += 25; 
-    if (matchType.includes("qf") || matchType.includes("quarter")) points += 50; 
-    if (matchType.includes("sf") || matchType.includes("semi")) points += 75; 
-    if (matchType.includes("final") && !matchType.includes("semi")) points += 200; 
+    const typeLower = matchType.toLowerCase();
+    if (typeLower.includes("32") || typeLower.includes("r32")) points += 25; 
+    if (typeLower.includes("16")) points += 25; 
+    if (typeLower.includes("qf") || typeLower.includes("quarter")) points += 50; 
+    if (typeLower.includes("sf") || typeLower.includes("semi")) points += 75; 
+    if (typeLower.includes("final") && !typeLower.includes("semi")) points += 200; 
   }
   return points;
 }

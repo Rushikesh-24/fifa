@@ -3,6 +3,13 @@ import { db } from "../db/index";
 import { matchRecords, participants, selectedTeams, systemState, groupStandingsCache } from "../db/schema";
 import { eq, inArray } from "drizzle-orm";
 
+// Safely parse penalty scores (Catches literal "null" strings from the API)
+const parsePenalty = (val: any) => {
+  if (val === undefined || val === null || val === "null" || val === "") return null;
+  const parsed = parseInt(val);
+  return isNaN(parsed) ? null : parsed;
+};
+
 async function runEngine() {
   try {
     console.log("Authenticating with World Cup API...");
@@ -90,23 +97,18 @@ async function runEngine() {
       const homeScore = parseInt(match.home_score) || 0;
       const awayScore = parseInt(match.away_score) || 0;
 
-      // Determine regular match outcomes
+      const homePenaltyScore = parsePenalty(match.home_penalty_score);
+      const awayPenaltyScore = parsePenalty(match.away_penalty_score);
+
       let homeWon = homeScore > awayScore;
       let awayWon = awayScore > homeScore;
 
-      // If regular time is a draw, break the tie using penalty scores
-      if (homeScore === awayScore) {
-        const homePenaltyScore = parseInt(match.home_penalty_score) || 0;
-        const awayPenaltyScore = parseInt(match.away_penalty_score) || 0;
-        
-        if (homePenaltyScore > awayPenaltyScore) {
-          homeWon = true;
-        } else if (awayPenaltyScore > homePenaltyScore) {
-          awayWon = true;
-        }
+      // Handle penalty shootouts for draws
+      if (homeScore === awayScore && homePenaltyScore !== null && awayPenaltyScore !== null) {
+        if (homePenaltyScore > awayPenaltyScore) homeWon = true;
+        else if (awayPenaltyScore > homePenaltyScore) awayWon = true;
       }
 
-      // Calculate points by explicitly verifying progression winners independently of goal math
       const homePoints = calculatePoints(homeScore, awayScore, match.home_scorers, match.type || "group", homeWon);
       const awayPoints = calculatePoints(awayScore, homeScore, match.away_scorers, match.type || "group", awayWon);
 
@@ -119,8 +121,8 @@ async function runEngine() {
         awayTeam,
         homeScore,
         awayScore,
-        homePenaltyScore: match.home_penalty_score ? parseInt(match.home_penalty_score) : null,
-        awayPenaltyScore: match.away_penalty_score ? parseInt(match.away_penalty_score) : null,
+        homePenaltyScore,
+        awayPenaltyScore,
         homeScorers: match.home_scorers || "",
         awayScorers: match.away_scorers || "",
         matchType: match.type || "group",
@@ -147,17 +149,14 @@ async function updateSystemSyncTime() {
 }
 
 function calculatePoints(teamScore: number, opponentScore: number, scorersString: string, matchType: string, isWinner: boolean) {
-  // Goal points and volume bonuses are calculated purely on active play-time scores
   let points = teamScore * 10;
   if (teamScore >= 5) points += 25;
   else if (teamScore === 3 || teamScore === 4) points += 10;
   
-  // Margins and clean sheets also track play-time goals exclusively
   if (teamScore > opponentScore && opponentScore === 0) points += 25;
   if (teamScore > opponentScore && (teamScore - opponentScore) >= 3) points += 25;
   if (hasHatTrick(scorersString)) points += 50;
   
-  // Award knockout progression bonuses securely using penalty outcomes if verified
   if (isWinner) {
     const typeLower = matchType.toLowerCase();
     if (typeLower.includes("32") || typeLower.includes("r32")) points += 25; 
@@ -171,7 +170,7 @@ function calculatePoints(teamScore: number, opponentScore: number, scorersString
 
 function hasHatTrick(scorersString: string): boolean {
   if (!scorersString || scorersString === "null" || scorersString.length < 5) return false;
-  const rawArray = scorersString.replace(/^[{"“]+|[}"”]+$/g, '').split(/","|"”,”.../);
+  const rawArray = scorersString.replace(/^[{"“]+|[}"”]+$/g, '').split(/","|"”,”“"/);
   const playerGoalCounts: Record<string, number> = {};
   for (const event of rawArray) {
     if (event.includes("(OG)")) continue;
