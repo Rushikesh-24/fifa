@@ -1,30 +1,8 @@
 // components/OptimalSquad.tsx
 import { Flag } from "./Flag";
+import { GROUPS } from "./groups";
 
 export type TeamStat = { name: string; points: number; played: number; goals: number };
-
-// Group membership per the draft rules (2 from A, 2 from B, 1 from C).
-// Names are spelled to match TEAM_INFO in Flag.tsx exactly, so flag lookup
-// always resolves.
-const GROUP_A = ["Argentina", "France", "Spain", "England", "Brazil", "Portugal", "Germany", "Netherlands"];
-
-const GROUP_B = [
-  "Morocco", "Colombia", "Croatia", "Uruguay", "Japan", "United States", "Mexico", "Belgium",
-  "Switzerland", "Senegal", "South Korea", "Austria", "Turkey", "Ecuador", "Canada", "Algeria",
-  "Sweden", "Norway", "Egypt", "Australia",
-];
-
-const GROUP_C = [
-  "Saudi Arabia", "Iran", "Iraq", "Qatar", "Ivory Coast", "South Africa", "Ghana", "Tunisia",
-  "Czech Republic", "Scotland", "Panama", "New Zealand", "Bosnia and Herzegovina", "DR Congo",
-  "Haiti", "Curaçao", "Cape Verde", "Jordan", "Uzbekistan", "Paraguay",
-];
-
-const GROUPS = [
-  { key: "A", label: "Group A · Elite Favourites", teams: GROUP_A, pick: 2 },
-  { key: "B", label: "Group B · Strong Contenders", teams: GROUP_B, pick: 2 },
-  { key: "C", label: "Group C · Underdogs & Dark Horses", teams: GROUP_C, pick: 1 },
-] as const;
 
 // Same tie-break rule used on the main leaderboard: points, then goals, then
 // fewest matches played, so a team's rank here is always consistent with

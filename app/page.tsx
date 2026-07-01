@@ -1,10 +1,31 @@
 import Link from "next/link";
 import { db } from "../db/index";
-import { participants, selectedTeams, systemState, matchRecords } from "../db/schema";
+import {
+  participants,
+  selectedTeams,
+  systemState,
+  matchRecords,
+} from "../db/schema";
 import { desc, eq } from "drizzle-orm";
 import PlayerAvatar from "../components/PlayerAvatar";
 import SyncStatus from "../components/SyncStatus";
 import MatchesSection from "../components/MatchesSection";
+import ManagerPointsChart from "../components/ManagerPointChart";
+
+const CHART_PALETTE = [
+  "#2ED47E",
+  "#4C9EF5",
+  "#F5A623",
+  "#E85D75",
+  "#9B6BF2",
+  "#F2C94C",
+  "#5BC8AF",
+  "#F2784B",
+  "#7ED6DF",
+  "#D46A9F",
+  "#8CE07A",
+  "#C77DFF",
+];
 
 export const revalidate = 60;
 
@@ -22,13 +43,107 @@ function rankColor(index: number) {
   return "text-[#93A696]";
 }
 
+type PointsBreakdownItem = {
+  category: string;
+  description: string;
+  points: number;
+};
+
+function sumBreakdown(json: string | null | undefined): number {
+  if (!json) return 0;
+  try {
+    const arr: PointsBreakdownItem[] = JSON.parse(json);
+    return arr.reduce((s, b) => s + (b.points || 0), 0);
+  } catch {
+    return 0;
+  }
+}
+
+// Group by calendar day so multiple matches on the same day produce one chart point
+function dayKey(iso: string) {
+  return iso.slice(0, 10); // "YYYY-MM-DD"
+}
+
+function buildManagerChartData(
+  players: { id: string; name: string }[],
+  allTeams: { participantId: string; teamName: string }[],
+  matches: {
+    matchDate: string | null;
+    homeTeam: string;
+    awayTeam: string;
+    homePointsBreakdown: string | null;
+    awayPointsBreakdown: string | null;
+  }[],
+) {
+  // Filter out matches with no date up front — nothing downstream needs to handle null anymore
+  const sorted = matches
+    .filter((m): m is typeof m & { matchDate: string } => m.matchDate !== null)
+    .sort(
+      (a, b) =>
+        new Date(a.matchDate).getTime() - new Date(b.matchDate).getTime(),
+    );
+
+  const dateSet = new Set<string>();
+  sorted.forEach((m) => dateSet.add(dayKey(m.matchDate)));
+  const dates = [...dateSet].sort();
+
+  const teamToParticipants = new Map<string, string[]>();
+  allTeams.forEach((t) => {
+    const list = teamToParticipants.get(t.teamName) ?? [];
+    list.push(t.participantId);
+    teamToParticipants.set(t.teamName, list);
+  });
+
+  const pointsByParticipantByDay = new Map<string, Map<string, number>>();
+  players.forEach((p) => pointsByParticipantByDay.set(p.id, new Map()));
+
+  const applyPoints = (teamName: string, day: string, pts: number) => {
+    if (pts === 0) return;
+    const pids = teamToParticipants.get(teamName);
+    if (!pids) return;
+    for (const pid of pids) {
+      const dayMap = pointsByParticipantByDay.get(pid);
+      if (!dayMap) continue;
+      dayMap.set(day, (dayMap.get(day) ?? 0) + pts);
+    }
+  };
+
+  for (const m of sorted) {
+    const day = dayKey(m.matchDate);
+    applyPoints(m.homeTeam, day, sumBreakdown(m.homePointsBreakdown));
+    applyPoints(m.awayTeam, day, sumBreakdown(m.awayPointsBreakdown));
+  }
+
+  const series = players.map((p, i) => {
+    const dayMap = pointsByParticipantByDay.get(p.id) ?? new Map();
+    let running = 0;
+    const points = dates.map((d) => {
+      running += dayMap.get(d) ?? 0;
+      return running;
+    });
+    return {
+      id: p.id,
+      name: p.name,
+      color: CHART_PALETTE[i % CHART_PALETTE.length],
+      points,
+    };
+  });
+
+  return { dates, series };
+}
 export default async function LeaderboardPage() {
   // 1. Fetch existing leaderboard data
-  const players = await db.select().from(participants).orderBy(desc(participants.totalPoints));
+  const players = await db
+    .select()
+    .from(participants)
+    .orderBy(desc(participants.totalPoints));
   const allTeams = await db.select().from(selectedTeams);
 
   // 2. Fetch system state for the countdown timer
-  const state = await db.select().from(systemState).where(eq(systemState.id, 1));
+  const state = await db
+    .select()
+    .from(systemState)
+    .where(eq(systemState.id, 1));
   const lastSyncAt = state.length > 0 ? state[0].lastSyncAt : null;
 
   // 3. Fetch ALL processed matches sorted by the ACTUAL game date (newest first)
@@ -46,12 +161,22 @@ export default async function LeaderboardPage() {
       .sort((a, b) => b.points - a.points); // Sort teams by highest points first
     return { ...player, teams: playerTeams };
   });
+  const { dates: chartDates, series: chartSeries } = buildManagerChartData(
+    players,
+    allTeams,
+    recentMatches,
+  );
+  // console.log("colors:", chartSeries.map(s => ({ name: s.name, color: s.color })));
+  // console.log("CHART_PALETTE raw:", CHART_PALETTE);
 
   const totalManagers = players.length;
   const leaderPoints = leaderboardData[0]?.totalPoints ?? 0;
   const avgPoints =
     totalManagers > 0
-      ? Math.round(players.reduce((sum, p) => sum + (p.totalPoints ?? 0), 0) / totalManagers)
+      ? Math.round(
+          players.reduce((sum, p) => sum + (p.totalPoints ?? 0), 0) /
+            totalManagers,
+        )
       : 0;
 
   return (
@@ -91,7 +216,8 @@ export default async function LeaderboardPage() {
                 Standings
               </h1>
               <p className="mt-3 text-base md:text-lg text-[#93A696] max-w-xl">
-                Every manager, ranked by total points. Tap a name to see how each squad is scoring.
+                Every manager, ranked by total points. Tap a name to see how
+                each squad is scoring.
               </p>
             </div>
 
@@ -131,17 +257,49 @@ export default async function LeaderboardPage() {
                 href="/teams"
                 className="inline-flex items-center justify-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.15em] text-[#93A696] border border-[#1B2D21] px-4 py-2.5 hover:border-[#2ED47E]/50 hover:text-[#2ED47E] transition-colors group"
               >
-                <svg 
-                  viewBox="0 0 24 24" 
-                  fill="none" 
-                  stroke="currentColor" 
-                  strokeWidth="2" 
-                  className="w-3.5 h-3.5" 
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="w-3.5 h-3.5"
                   aria-hidden
                 >
                   <path d="M12 20v-8M6 20V8m12 12V4" />
                 </svg>
                 Nation Rankings
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  className="w-3.5 h-3.5 transition-transform duration-200 group-hover:translate-x-0.5"
+                  aria-hidden
+                >
+                  <path d="M5 12h14M12 5l7 7-7 7" />
+                </svg>
+              </Link>
+              <Link
+                href="/rules"
+                className="inline-flex items-center justify-center gap-2.5 text-[11px] font-bold uppercase tracking-[0.15em] text-[#93A696] border border-[#1B2D21] px-4 py-2.5 hover:border-[#2ED47E]/50 hover:text-[#2ED47E] transition-colors group"
+              >
+                <svg
+                  xmlns="http://w3.org"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="w-3.5 h-3.5"
+                >
+                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                  <line x1="9" y1="10" x2="15" y2="10"></line>
+                  <line x1="9" y1="14" x2="15" y2="14"></line>
+                  <line x1="9" y1="18" x2="11" y2="18"></line>
+                </svg>
+                Rules
                 <svg
                   viewBox="0 0 24 24"
                   fill="none"
@@ -162,13 +320,17 @@ export default async function LeaderboardPage() {
               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#93A696] mb-1">
                 Managers
               </p>
-              <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">{totalManagers}</p>
+              <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">
+                {totalManagers}
+              </p>
             </div>
             <div className="bg-[#060D09] px-4 md:px-6 py-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#93A696] mb-1">
                 Matches Scored
               </p>
-              <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">{recentMatches.length}</p>
+              <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">
+                {recentMatches.length}
+              </p>
             </div>
             <div className="bg-[#060D09] px-4 md:px-6 py-4">
               <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-[#93A696] mb-1">
@@ -176,7 +338,9 @@ export default async function LeaderboardPage() {
               </p>
               <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">
                 {leaderPoints}
-                <span className="text-xs ml-1 text-[#93A696] font-sans font-normal normal-case">pts</span>
+                <span className="text-xs ml-1 text-[#93A696] font-sans font-normal normal-case">
+                  pts
+                </span>
               </p>
             </div>
             <div className="bg-[#060D09] px-4 md:px-6 py-4">
@@ -185,7 +349,9 @@ export default async function LeaderboardPage() {
               </p>
               <p className="font-mono font-black text-2xl md:text-3xl tabular-nums">
                 {avgPoints}
-                <span className="text-xs ml-1 text-[#93A696] font-sans font-normal normal-case">pts</span>
+                <span className="text-xs ml-1 text-[#93A696] font-sans font-normal normal-case">
+                  pts
+                </span>
               </p>
             </div>
           </dl>
@@ -215,18 +381,26 @@ export default async function LeaderboardPage() {
                   <summary
                     className={`list-none grid grid-cols-12 items-center gap-2 px-4 md:px-6 py-4 cursor-pointer border-l-4 transition-colors hover:bg-[#0D1B13] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#2ED47E]/60 ${rankStripe(index)}`}
                   >
-                    <div className={`col-span-2 md:col-span-1 font-mono text-lg font-bold tabular-nums ${rankColor(index)}`}>
+                    <div
+                      className={`col-span-2 md:col-span-1 font-mono text-lg font-bold tabular-nums ${rankColor(index)}`}
+                    >
                       {String(index + 1).padStart(2, "0")}
                     </div>
 
                     <div className="col-span-6 md:col-span-8 flex items-center gap-3 min-w-0">
                       <div className="relative w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10 rounded-full overflow-hidden border border-[#1B2D21] shrink-0">
-                        <PlayerAvatar name={player.name} imageUrl={player.imageUrl} />
+                        <PlayerAvatar
+                          name={player.name}
+                          imageUrl={player.imageUrl}
+                        />
                       </div>
                       <div className="min-w-0">
-                        <p className="font-bold text-sm md:text-base truncate">{player.name}</p>
+                        <p className="font-bold text-sm md:text-base truncate">
+                          {player.name}
+                        </p>
                         <p className="text-[11px] text-[#93A696] mt-0.5">
-                          {player.teams.length} squad{player.teams.length === 1 ? "" : "s"}
+                          {player.teams.length} squad
+                          {player.teams.length === 1 ? "" : "s"}
                         </p>
                       </div>
                     </div>
@@ -252,13 +426,18 @@ export default async function LeaderboardPage() {
                   <div className="bg-[#0A1610] border-t border-[#1B2D21] px-4 md:px-6 py-5">
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
                       {player.teams.map((team, i) => (
-                        <div key={i} className="border border-[#1B2D21] bg-[#060D09] px-3 py-3">
+                        <div
+                          key={i}
+                          className="border border-[#1B2D21] bg-[#060D09] px-3 py-3"
+                        >
                           <p className="text-[11px] font-semibold text-[#93A696] uppercase tracking-wide truncate mb-1.5">
                             {team.name}
                           </p>
                           <p className="font-mono font-bold text-lg tabular-nums">
                             {team.points}
-                            <span className="text-[10px] text-[#93A696] ml-1 font-sans font-normal normal-case">pts</span>
+                            <span className="text-[10px] text-[#93A696] ml-1 font-sans font-normal normal-case">
+                              pts
+                            </span>
                           </p>
                         </div>
                       ))}
@@ -269,11 +448,15 @@ export default async function LeaderboardPage() {
             </div>
           </div>
         </section>
+        <section>
+          <h2 className="text-xs font-bold uppercase tracking-[0.2em] text-[#93A696] mb-4">
+            Points Over Time
+          </h2>
+          <ManagerPointsChart dates={chartDates} series={chartSeries} />
+        </section>
 
         {/* RESULTS */}
-        {recentMatches.length > 0 && (
-          <MatchesSection matches={recentMatches} />
-        )}
+        {recentMatches.length > 0 && <MatchesSection matches={recentMatches} />}
       </div>
     </main>
   );
