@@ -35,6 +35,8 @@ export const matchRecords = sqliteTable("match_records", {
   awayPenaltyScore: integer("away_penalty_score"),
   homeScorers: text("home_scorers"), // Storing the raw string: "{\"F. Balogun 31'\", ...}"
   awayScorers: text("away_scorers"),
+  homePointsBreakdown: text("home_points_breakdown"),
+  awayPointsBreakdown: text("away_points_breakdown"),
   matchType: text("match_type"), // from "type" (e.g., "group", "quarter-final" - needed for progression bonus)
   finished: text("finished"), // from "finished" (e.g., "TRUE" or "FALSE")
   processedForPoints: integer("processed_for_points", { mode: "boolean" }).notNull().default(false),
